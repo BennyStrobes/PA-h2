@@ -1,5 +1,5 @@
 # PA-h2
-Partition variance of interaction-QTL effects between proportional-amplification-mediated effects and non-proportional-amplification mediated effects
+Proportional Amplification Heritability: Partition variance of interaction-QTL effects between proportional-amplification-mediated effects and non-proportional-amplification mediated effects
 
 ## Installing dependencies for PA-h2
 
