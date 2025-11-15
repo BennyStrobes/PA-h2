@@ -1,0 +1,15 @@
+name: PA-h2
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - python=3.10.14
+  - numpy=1.26.4
+  - pandas=2.2.2
+  - statsmodels=0.14.2
+  - tqdm=4.66.4
+  - pgenlib=0.93.0       # from bioconda
+  - pip=24.2
+  - setuptools=70.0.0
+  - wheel=0.43.0
