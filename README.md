@@ -11,5 +11,9 @@ conda env create -f environment.yml
 conda activate PA-h2
 ```
 
+## Running PA-h2
+
+PA-h2 takes as input the same file-type as used by [TensorQTL](https://github.com/broadinstitute/tensorqtl).
+
 
 
