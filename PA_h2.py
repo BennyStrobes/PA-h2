@@ -496,6 +496,7 @@ def main():
 	######################
 	# Run genome wide PA-h2 regression from per gene summary stats
 	######################
+	print('Running genome-wide regression + bootstrapping')
 	constant_genetic_variance, pa_constant_genetic_variance, pa_interaction_genetic_variance, traditional_interaction_genetic_variance, total_constant_genetic_variance = compute_variance_parameters(per_gene_HE_ss)
 	bs_cgv_mean, bs_cgv_se, bs_pa_cgv_mean, bs_pa_cgv_se, bs_pa_igv_mean, bs_pa_igv_se, bs_t_igv_mean, bs_t_igv_se, bs_tot_cgv_mean, bs_tot_cgv_se = bootstrap_variance_parameters(per_gene_HE_ss, n_boots=5000)
 
