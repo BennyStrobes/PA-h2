@@ -221,6 +221,13 @@ def extract_per_gene_HE_regression_summary_stats(args):
 		pgen, pvar, psam = load_in_genotype(args.plink2_per_chrom_stem, chrom_num)
 		# Extract positions of variants (all on same chrom)
 		variant_positions = pvar[:, 1].astype(float)
+		# Check to make sure pgen file has variants on only one chromosome
+		if len(np.unique(pvar[:,0])) != 1:
+			print('Fatal error: plink2 file contains variants on multiple chromosomes')
+			sys.exit(1)
+		if np.unique(pvar[:,0])[0] != str(chrom_num):
+			print('Fatal error: variants in plink2 file do not patch chromosome of plink2 label')
+			sys.exit(1)
 
 		# E_var_sample_names must be a subset of psam.
 		# But psam can have more samples (and in different order) than E_var_sample_names
@@ -516,7 +523,7 @@ def main():
 	t.close()
 
 	print('PA-h2 summary file: ' + args.output_stem + '_PA_h2_summary.txt')
-	print('standard interaction h2 summary file: 'args.output_stem + '_standard_interaction_h2_summary.txt')
+	print('standard interaction h2 summary file: ' + args.output_stem + '_standard_interaction_h2_summary.txt')
 
 	return
 
