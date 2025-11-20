@@ -35,4 +35,4 @@ where:
 Some notes:
 - Sample names in ${expression_bed_file} and ${E_var_file} need to be identical (in both name and order)
 - Currently only works with plink2 files already seperated by chromosome. 
-- plink2 samples do not need to be in same order as samples in ${expression_bed_file}. There can even more samples in the plink2 file than there are in the ${expression_bed_file}. Though all samples in ${expression_bed_file} need to be found in plink2.
+- plink2 samples (iid column of psam) do not need to be in same order as samples in ${expression_bed_file}. There can even more samples in the plink2 file than there are in the ${expression_bed_file}. Though all samples in ${expression_bed_file} need to be found in plink2.
