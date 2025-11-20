@@ -20,9 +20,18 @@ To run PA-h2:
 ```
 python ${pa_h2_code_dir}PA_h2.py \
 	--expression-bed $expression_bed_file \
-	--plink2-per-chrom-stem $plink2_genotype_stem \
 	--binary-E-interaction-covariate-file $E_var_file \
+	--plink2-per-chrom-stem $plink2_genotype_stem \
 	--output-stem $output_stem
 ```
+where:
+- ${pa_h2_code_dir} is the absolute path (including a "/" at the end) to the downloaded PA-h2 package.
+- ${expression_bed_file} is the path to an expression bed file (same format as TensorQTL [example](https://github.com/broadinstitute/tensorqtl/blob/master/example/data/GEUVADIS.445_samples.expression.bed.gz))
+- ${E_var_file} is the absolute path to a covariate file with a single binary covariate (encoded {0, 1}; in same format as TensorQTL [example](https://github.com/broadinstitute/tensorqtl/blob/master/example/data/GEUVADIS.445_samples.covariates.txt), but with only a single covariate).
+- ${plink2-per-chrom-stem} is the absolute path to the stem of a plink2 file. For example: ${plink2-per-chrom-stem}"22.pgen" is the corresponding pgen file for chromosome 22.
+- ${output_stem} is the absolute path to output files. PA-h2 makes two output files: ${output_stem}_PA_H2_summary.txt and ${output_stem}_PA_H2_summary.txt
 
-where ${pa_h2_code_dir}
+
+Some notes:
+- Sample names in ${expression_bed_file} and ${E_var_file} need to be identical (in both name and order)
+- Currently only works with plink2 files already seperated by chromosome. 
