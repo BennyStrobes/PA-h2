@@ -265,6 +265,9 @@ def extract_per_gene_HE_regression_summary_stats(args):
 			########
 			# Get expression levels for this gene
 			YY = np.asarray(data[4:]).astype(float)
+			# filter out genes with 0 variance
+			if np.std(YY) == 0.0:
+				continue
 			# Standardize YY 
 			if args.standardize_expression:
 				YY = (YY - np.mean(YY))/np.std(YY)
