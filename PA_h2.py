@@ -144,6 +144,44 @@ def standardize_genotype(G, axis=1, eps=1e-12):
 
 	return G_std, keep_mask
 
+def get_HE_regression_summary_stats_for_single_gene_permed(YY, GG, EE, YY_perm):
+	# Standardize EE
+	stand_EE = (EE - np.mean(EE))/np.std(EE)
+	# Create interaction effects
+	EE_GG = GG * stand_EE[:, np.newaxis]
+
+	pred_SS = np.ones(len(EE))
+	pred_SS[EE==1.0] = np.var(YY_perm[EE==1.0],ddof=1)
+	pred_SS[EE==0.0] = np.var(YY_perm[EE==0.0],ddof=1)		
+	pred_SS = pred_SS/np.mean(pred_SS)
+	PA_GG = GG * np.sqrt(pred_SS[:, np.newaxis])
+
+
+	# Covariances
+	Y_t_Y = np.dot(YY.reshape(-1,1), YY.reshape(1,-1))
+	E_t_E = np.dot(stand_EE.reshape(-1,1), stand_EE.reshape(1,-1))
+	G_T_G = np.dot(GG, np.transpose(GG))
+	EG_T_EG = np.dot(EE_GG, np.transpose(EE_GG))
+	SG_T_SG =np.dot(PA_GG, np.transpose(PA_GG))
+
+	# Get upper-traingle elements in vector form of each covariance matrix
+	i_idx, j_idx = np.triu_indices(len(YY), k=1)
+	Y_t_Y_vec = Y_t_Y[i_idx, j_idx]
+	E_t_E_vec = E_t_E[i_idx, j_idx]
+	G_T_G_vec = G_T_G[i_idx, j_idx]
+	EG_T_EG_vec = EG_T_EG[i_idx, j_idx]
+	SG_T_SG_vec = SG_T_SG[i_idx, j_idx]
+
+	# Put all into one matrix
+	X_mat = np.transpose(np.vstack((E_t_E_vec, G_T_G_vec, EG_T_EG_vec, SG_T_SG_vec)))
+
+	# Compute summary stats
+	X_t_X = np.dot(np.transpose(X_mat), X_mat)
+	X_t_Y = np.dot(np.transpose(X_mat), Y_t_Y_vec)
+	ratio = np.square(np.mean(np.sqrt(pred_SS)))
+	
+	return X_t_X, X_t_Y, ratio
+
 def get_HE_regression_summary_stats_for_single_gene(YY, GG, EE):
 	# Standardize EE
 	stand_EE = (EE - np.mean(EE))/np.std(EE)
@@ -197,6 +235,44 @@ def extract_total_number_of_genes(filer):
 	f.close()
 	return counter
 
+
+def get_permuted_expression_on_this_chromosome(chrom_string, expression_bed, args):
+	f = open(expression_bed)
+	head_count = 0
+	expr_mat = []
+	for line in f:
+		line = line.rstrip()
+		data = line.split('\t')
+		if head_count == 0:
+			head_count = head_count + 1
+			continue
+
+		#########
+		# Standard line
+		# Parse relevent fields
+		gene_chrom_string = data[0]
+		# Skip genes not on current chromosome
+		if gene_chrom_string != chrom_string:
+			continue
+
+		# Get expression levels for this gene
+		YY = np.asarray(data[4:]).astype(float)
+		# filter out genes with 0 variance
+		if np.std(YY) == 0.0:
+			continue
+		# Standardize YY 
+		if args.standardize_expression:
+			YY = (YY - np.mean(YY))/np.std(YY)
+		expr_mat.append(YY)
+	f.close()
+
+	expr_mat = np.asarray(expr_mat)
+	perm_indices = np.random.permutation(np.arange(expr_mat.shape[0]))
+
+	return expr_mat[perm_indices]
+
+
+
 def extract_per_gene_HE_regression_summary_stats(args):
 
 	# First get total number of genes
@@ -234,6 +310,11 @@ def extract_per_gene_HE_regression_summary_stats(args):
 		# Extract vector containing ordering of genotype samples
 		genotype_sample_reordering = reorder_genotype_samples(psam, E_var_sample_names)
 
+		# If permute, load in permutation data (permutation is acrosss genes)
+		if args.permute:
+			perm_expression = get_permuted_expression_on_this_chromosome(chrom_string, args.expression_bed, args)
+
+		perm_counter = 0
 		# Now loop through genes
 		f = open(args.expression_bed)
 		head_count = 0
@@ -292,8 +373,13 @@ def extract_per_gene_HE_regression_summary_stats(args):
 			del standardized_cis_genotype_mat
 
 			# Get regression summary stats for a single gene
-			gene_XtX, gene_XtY, gene_ratio = get_HE_regression_summary_stats_for_single_gene(YY, GG, EE)
+			if args.permute:
+				gene_XtX, gene_XtY, gene_ratio = get_HE_regression_summary_stats_for_single_gene_permed(YY, GG, EE, perm_expression[perm_counter,:])
+			else:
+				gene_XtX, gene_XtY, gene_ratio = get_HE_regression_summary_stats_for_single_gene(YY, GG, EE)
 
+
+			perm_counter = perm_counter + 1
 
 			# Add to array
 			gene_ss_array.append((gene_id, gene_chrom_string, gene_tss, n_cis_snps, gene_XtX, gene_XtY, gene_ratio))
@@ -473,9 +559,12 @@ def main():
 						help='Minimum number of snps per gene. else we throw out the gene.')
 	parser.add_argument('--standardize-expression', default=True, type=bool,
 						help='Minimum number of snps per gene. else we throw out the gene.')
+	parser.add_argument('--permute', default=False, type=bool,
+						help='Minimum number of snps per gene. else we throw out the gene.')
 	args = parser.parse_args()
 
 	print_pah2_bear()
+
 	######################
 	# Load in data
 	# Create a list of length number of genes
