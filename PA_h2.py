@@ -8,6 +8,12 @@ from tqdm import tqdm
 import statsmodels.api as sm
 import pickle
 import random
+import gzip
+
+def open_expression_bed(filer):
+	if filer.endswith('.gz'):
+		return gzip.open(filer, 'rt')
+	return open(filer)
 
 def load_in_genotype(plink2_genotype_stem, chrom_num):
 	pgen_path = plink2_genotype_stem + str(chrom_num) + '.pgen'
@@ -222,7 +228,7 @@ def get_HE_regression_summary_stats_for_single_gene(YY, GG, EE):
 	return X_t_X, X_t_Y, ratio
 
 def extract_total_number_of_genes(filer):
-	f = open(filer)
+	f = open_expression_bed(filer)
 	autosomal_chroms = {}
 	for chrom_num in range(1,23):
 		autosomal_chroms['chr' + str(chrom_num)] =1
@@ -237,7 +243,7 @@ def extract_total_number_of_genes(filer):
 
 
 def get_permuted_expression_on_this_chromosome(chrom_string, expression_bed, args):
-	f = open(expression_bed)
+	f = open_expression_bed(expression_bed)
 	head_count = 0
 	expr_mat = []
 	for line in f:
@@ -316,7 +322,7 @@ def extract_per_gene_HE_regression_summary_stats(args):
 
 		perm_counter = 0
 		# Now loop through genes
-		f = open(args.expression_bed)
+		f = open_expression_bed(args.expression_bed)
 		head_count = 0
 		gene_count = 0
 		for line in f:
