@@ -15,6 +15,24 @@ def open_expression_bed(filer):
 		return gzip.open(filer, 'rt')
 	return open(filer)
 
+def load_in_gene_list(gene_list_file):
+	# Returns a set of gene ids to restrict the analysis to, or None if no filtering
+	if gene_list_file == 'none':
+		return None
+	f = open(gene_list_file)
+	gene_set = set()
+	head_count = 0
+	for line in f:
+		line = line.rstrip()
+		if head_count == 0:
+			head_count = head_count + 1
+			continue
+		if line == '':
+			continue
+		gene_set.add(line.split('\t')[0])
+	f.close()
+	return gene_set
+
 def load_in_genotype(plink2_genotype_stem, chrom_num):
 	pgen_path = plink2_genotype_stem + str(chrom_num) + '.pgen'
 	pvar_path = plink2_genotype_stem + str(chrom_num) + '.pvar'
@@ -227,22 +245,29 @@ def get_HE_regression_summary_stats_for_single_gene(YY, GG, EE):
 	
 	return X_t_X, X_t_Y, ratio
 
-def extract_total_number_of_genes(filer):
+def extract_total_number_of_genes(filer, gene_set=None):
 	f = open_expression_bed(filer)
 	autosomal_chroms = {}
 	for chrom_num in range(1,23):
 		autosomal_chroms['chr' + str(chrom_num)] =1
 	counter = 0
+	head_count = 0
 	for line in f:
 		line = line.rstrip()
 		data = line.split('\t')
+		if head_count == 0:
+			head_count = head_count + 1
+			continue
+		# Skip genes not in the gene list (if a gene list was provided)
+		if gene_set is not None and data[3] not in gene_set:
+			continue
 		if data[0] in autosomal_chroms:
 			counter = counter + 1
 	f.close()
 	return counter
 
 
-def get_permuted_expression_on_this_chromosome(chrom_string, expression_bed, args):
+def get_permuted_expression_on_this_chromosome(chrom_string, expression_bed, args, gene_set=None):
 	f = open_expression_bed(expression_bed)
 	head_count = 0
 	expr_mat = []
@@ -259,6 +284,9 @@ def get_permuted_expression_on_this_chromosome(chrom_string, expression_bed, arg
 		gene_chrom_string = data[0]
 		# Skip genes not on current chromosome
 		if gene_chrom_string != chrom_string:
+			continue
+		# Skip genes not in the gene list (if a gene list was provided)
+		if gene_set is not None and data[3] not in gene_set:
 			continue
 
 		# Get expression levels for this gene
@@ -281,8 +309,11 @@ def get_permuted_expression_on_this_chromosome(chrom_string, expression_bed, arg
 
 def extract_per_gene_HE_regression_summary_stats(args):
 
+	# Load in gene list to restrict analysis to (None if no filtering)
+	gene_set = load_in_gene_list(args.gene_list)
+
 	# First get total number of genes
-	total_n_genes = extract_total_number_of_genes(args.expression_bed)
+	total_n_genes = extract_total_number_of_genes(args.expression_bed, gene_set)
 
 	# Initialize list to keep track of summary stats
 	gene_ss_array = []
@@ -318,7 +349,7 @@ def extract_per_gene_HE_regression_summary_stats(args):
 
 		# If permute, load in permutation data (permutation is acrosss genes)
 		if args.permute:
-			perm_expression = get_permuted_expression_on_this_chromosome(chrom_string, args.expression_bed, args)
+			perm_expression = get_permuted_expression_on_this_chromosome(chrom_string, args.expression_bed, args, gene_set)
 
 		perm_counter = 0
 		# Now loop through genes
@@ -347,6 +378,9 @@ def extract_per_gene_HE_regression_summary_stats(args):
 
 			# Skip genes not on current chromosome
 			if gene_chrom_string != chrom_string:
+				continue
+			# Skip genes not in the gene list (if a gene list was provided)
+			if gene_set is not None and gene_id not in gene_set:
 				continue
 
 			########
@@ -557,7 +591,8 @@ def main():
 						help='Path to binary E covariate file')
 	parser.add_argument('--output-stem', default='', type=str,
 						help='Path to output file stem')
-
+	parser.add_argument('--gene-list', default='none', type=str,
+						help='File containing list of genes to run analysis on. Use none if dont wish to filter')
 	# Defaults
 	parser.add_argument('--cis-radius', default=500000, type=int,
 						help='cis window around TSS to consider snps')
