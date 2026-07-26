@@ -22,7 +22,8 @@ python ${pa_h2_code_dir}PA_h2.py \
 	--expression-bed $expression_bed_file \
 	--binary-E-interaction-covariate-file $E_var_file \
 	--plink2-per-chrom-stem $plink2_genotype_stem \
-	--output-stem $output_stem
+	--output-stem $output_stem \
+	--gene-list $gene_list_file
 ```
 where:
 - ${pa_h2_code_dir} is the absolute path (including a "/" at the end) to the downloaded PA-h2 package.
@@ -30,6 +31,7 @@ where:
 - ${E_var_file} is the absolute path to a covariate file with a single binary covariate (encoded {0, 1}; in same format as TensorQTL [example](https://github.com/broadinstitute/tensorqtl/blob/master/example/data/GEUVADIS.445_samples.covariates.txt), but with only a single covariate).
 - ${plink2-per-chrom-stem} is the absolute path to the stem of a plink2 file. For example: ${plink2-per-chrom-stem}"22.pgen" is the corresponding pgen file for chromosome 22.
 - ${output_stem} is the absolute path to output files. PA-h2 makes two output files: ${output_stem}"_PA_H2_summary.txt" and ${output_stem}"_standard_interaction_h2_summary.txt"
+- ${gene_list_file} is the absolute path to a file containing the list of genes to restrict the analysis to (optional; defaults to "none", which runs on all genes). The file has a header line followed by one gene per line, where the first (tab-delimited) column contains the gene identifier (matching the gene_id column of ${expression_bed_file}). No need for multiple columns, but if there are multiple then the first one will be used. Both the main analysis and the permutation are restricted to these genes.
 
 
 Some notes:
