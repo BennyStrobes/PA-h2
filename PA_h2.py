@@ -512,16 +512,19 @@ def bootstrap_variance_parameters(per_gene_HE_ss, n_boots=1000):
 
 		# Run genome wide regression on bootstrapped samples
 		bs_constant_genetic_variance, bs_pa_constant_genetic_variance, bs_pa_interaction_genetic_variance, bs_traditional_interaction_genetic_variance, bs_total_constant_genetic_variance = compute_variance_parameters(bs_per_gene_HE_ss)
-		
+
+		# Fraction of total interaction variance attributable to the PA-interaction term (both from full PA model)
+		bs_pa_interaction_fraction = bs_pa_interaction_genetic_variance / (bs_pa_interaction_genetic_variance + bs_traditional_interaction_genetic_variance)
+
 		# Add to global bootstrap mat
-		bs_mat.append([bs_constant_genetic_variance, bs_pa_constant_genetic_variance, bs_pa_interaction_genetic_variance, bs_traditional_interaction_genetic_variance, bs_total_constant_genetic_variance])
+		bs_mat.append([bs_constant_genetic_variance, bs_pa_constant_genetic_variance, bs_pa_interaction_genetic_variance, bs_traditional_interaction_genetic_variance, bs_total_constant_genetic_variance, bs_pa_interaction_fraction])
 
 	bs_mat = np.asarray(bs_mat)
 
 	bs_means = np.mean(bs_mat,axis=0)
 	bs_ses = np.std(bs_mat,axis=0, ddof=1)
 
-	return bs_means[0], bs_ses[0], bs_means[1], bs_ses[1], bs_means[2], bs_ses[2], bs_means[3], bs_ses[3], bs_means[4], bs_ses[4]
+	return bs_means[0], bs_ses[0], bs_means[1], bs_ses[1], bs_means[2], bs_ses[2], bs_means[3], bs_ses[3], bs_means[4], bs_ses[4], bs_means[5], bs_ses[5]
 
 
 def bootstrap_standard_interaction_variance_parameters(per_gene_HE_ss, n_boots=1000):
@@ -633,7 +636,10 @@ def main():
 	print('\n')
 	print('Running genome-wide regression + bootstrapping\n')
 	constant_genetic_variance, pa_constant_genetic_variance, pa_interaction_genetic_variance, traditional_interaction_genetic_variance, total_constant_genetic_variance = compute_variance_parameters(per_gene_HE_ss)
-	bs_cgv_mean, bs_cgv_se, bs_pa_cgv_mean, bs_pa_cgv_se, bs_pa_igv_mean, bs_pa_igv_se, bs_t_igv_mean, bs_t_igv_se, bs_tot_cgv_mean, bs_tot_cgv_se = bootstrap_variance_parameters(per_gene_HE_ss, n_boots=5000)
+	bs_cgv_mean, bs_cgv_se, bs_pa_cgv_mean, bs_pa_cgv_se, bs_pa_igv_mean, bs_pa_igv_se, bs_t_igv_mean, bs_t_igv_se, bs_tot_cgv_mean, bs_tot_cgv_se, bs_pa_ifrac_mean, bs_pa_ifrac_se = bootstrap_variance_parameters(per_gene_HE_ss, n_boots=5000)
+
+	# Fraction of total interaction variance attributable to the PA-interaction term (both from full PA model)
+	pa_interaction_fraction = pa_interaction_genetic_variance / (pa_interaction_genetic_variance + traditional_interaction_genetic_variance)
 
 	# Print to output
 	t = open(args.output_stem + '_PA_h2_summary.txt','w')
@@ -643,6 +649,7 @@ def main():
 	t.write('PA_interaction_genetic_variance\t' + str(pa_interaction_genetic_variance) + '\t' + str(bs_pa_igv_se) + '\t' + str(pa_interaction_genetic_variance/bs_pa_igv_se) + '\n')
 	t.write('traditional_interaction_genetic_variance\t' + str(traditional_interaction_genetic_variance) + '\t' + str(bs_t_igv_se) + '\t' + str(traditional_interaction_genetic_variance/bs_t_igv_se) + '\n')
 	t.write('total_constant_genetic_variance\t' + str(total_constant_genetic_variance) + '\t' + str(bs_tot_cgv_se) + '\t' + str(total_constant_genetic_variance/bs_tot_cgv_se) + '\n')
+	t.write('PA_interaction_fraction\t' + str(pa_interaction_fraction) + '\t' + str(bs_pa_ifrac_se) + '\t' + str(pa_interaction_fraction/bs_pa_ifrac_se) + '\n')
 	t.close()
 
 	######################
