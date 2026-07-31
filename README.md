@@ -23,7 +23,8 @@ python ${pa_h2_code_dir}PA_h2.py \
 	--binary-E-interaction-covariate-file $E_var_file \
 	--plink2-per-chrom-stem $plink2_genotype_stem \
 	--output-stem $output_stem \
-	--gene-list $gene_list_file
+	--gene-list $gene_list_file \
+	--covariate-file $covariate_file
 ```
 where:
 - ${pa_h2_code_dir} is the absolute path (including a "/" at the end) to the downloaded PA-h2 package.
@@ -32,10 +33,14 @@ where:
 - ${plink2-per-chrom-stem} is the absolute path to the stem of a plink2 file. For example: ${plink2-per-chrom-stem}"22.pgen" is the corresponding pgen file for chromosome 22.
 - ${output_stem} is the absolute path to output files. PA-h2 makes two output files: ${output_stem}"_PA_H2_summary.txt" and ${output_stem}"_standard_interaction_h2_summary.txt"
 - ${gene_list_file} is the absolute path to a file containing the list of genes to restrict the analysis to (optional; defaults to "none", which runs on all genes). The file has a header line followed by one gene per line, where the first (tab-delimited) column contains the gene identifier (matching the gene_id column of ${expression_bed_file}). No need for multiple columns, but if there are multiple then the first one will be used. Both the main analysis and the permutation are restricted to these genes.
+- ${covariate_file} is the absolute path to a file containing additional covariates to control for, such as genotype PCs, sex, or technical covariates (optional; defaults to "none", which fits no covariate term). Same format as ${E_var_file}, but may contain any number of covariate rows. Do not include the E variable itself here.
 
 
 Some notes:
 - Sample names in ${expression_bed_file} and ${E_var_file} need to be identical (in both name and order)
+- Covariates in ${covariate_file} are modelled with a single variance component (proportional to C\*C<sup>T</sup>). Each covariate is standardized to mean 0 and variance 1 before this term is built, so that covariates measured on larger scales do not dominate the component. Covariates with zero variance are dropped with a warning.
+- Be cautious about supplying expression PCs or PEER factors as covariates. Proportional amplification is a global rescaling of expression and will load onto the top expression factors, so regressing them out risks removing the signal PA-h2 is estimating. Genotype PCs and technical covariates are the intended use.
+- Covariates are not used when computing the per-group expression variances that define the proportional-amplification weights; those are always computed on the input expression.
 - Currently only works with plink2 files already seperated by chromosome. 
 - plink2 samples (iid column of psam) do not need to be in same order as samples in ${expression_bed_file}. There can even more samples in the plink2 file than there are in the ${expression_bed_file}. Though all samples in ${expression_bed_file} need to be found in plink2.
 

@@ -67,6 +67,40 @@ def load_in_E_variable(covariate_file):
 
 	return interaction_var, sample_names
 
+def load_in_covariates(covariate_file):
+	# Returns (standardized covariate matrix (num_covariates X num_samples), sample_names)
+	# Returns (None, None) if no covariate file was provided
+	if covariate_file == 'none':
+		return None, None
+
+	raw_cov = np.loadtxt(covariate_file, dtype=str, delimiter='\t')
+
+	if raw_cov.ndim != 2:
+		print('Fatal error: Covariate file must contain a header line followed by at least one covariate line')
+		sys.exit(1)
+
+	sample_names = raw_cov[0, 1:]
+	covariate_names = raw_cov[1:, 0]
+	CC = raw_cov[1:, 1:].astype(float)
+
+	# Standardize each covariate (ie. each row) to have mean zero and variance one.
+	# Necessary because all covariates share a single variance component:
+	# without this, covariates measured on larger scales would dominate that component.
+	means = np.mean(CC, axis=1, keepdims=True)
+	stds = np.std(CC, axis=1, keepdims=True)
+
+	# Filter out covariates with zero variance (these cannot be standardized)
+	keep_mask = stds.squeeze(axis=1) > 0.0
+	for covariate_name in covariate_names[keep_mask == False]:
+		print('Warning: removing covariate ' + covariate_name + ' because it has zero variance')
+	if np.sum(keep_mask) == 0:
+		print('Fatal error: No covariates with non-zero variance found in ' + covariate_file)
+		sys.exit(1)
+
+	CC = (CC[keep_mask] - means[keep_mask])/stds[keep_mask]
+
+	return CC, sample_names
+
 def reorder_genotype_samples(psam, E_var_sample_names):
 	geno_samples = psam[:, 1]
 	mapping = {}
@@ -168,7 +202,7 @@ def standardize_genotype(G, axis=1, eps=1e-12):
 
 	return G_std, keep_mask
 
-def get_HE_regression_summary_stats_for_single_gene_permed(YY, GG, EE, YY_perm):
+def get_HE_regression_summary_stats_for_single_gene_permed(YY, GG, EE, YY_perm, C_t_C_vec=None):
 	# Standardize EE
 	stand_EE = (EE - np.mean(EE))/np.std(EE)
 	# Create interaction effects
@@ -197,7 +231,11 @@ def get_HE_regression_summary_stats_for_single_gene_permed(YY, GG, EE, YY_perm):
 	SG_T_SG_vec = SG_T_SG[i_idx, j_idx]
 
 	# Put all into one matrix
-	X_mat = np.transpose(np.vstack((E_t_E_vec, G_T_G_vec, EG_T_EG_vec, SG_T_SG_vec)))
+	# The covariate term (if provided) is appended last so that the column indices of all other terms are unchanged
+	if C_t_C_vec is None:
+		X_mat = np.transpose(np.vstack((E_t_E_vec, G_T_G_vec, EG_T_EG_vec, SG_T_SG_vec)))
+	else:
+		X_mat = np.transpose(np.vstack((E_t_E_vec, G_T_G_vec, EG_T_EG_vec, SG_T_SG_vec, C_t_C_vec)))
 
 	# Compute summary stats
 	X_t_X = np.dot(np.transpose(X_mat), X_mat)
@@ -206,7 +244,7 @@ def get_HE_regression_summary_stats_for_single_gene_permed(YY, GG, EE, YY_perm):
 	
 	return X_t_X, X_t_Y, ratio
 
-def get_HE_regression_summary_stats_for_single_gene(YY, GG, EE):
+def get_HE_regression_summary_stats_for_single_gene(YY, GG, EE, C_t_C_vec=None):
 	# Standardize EE
 	stand_EE = (EE - np.mean(EE))/np.std(EE)
 	# Create interaction effects
@@ -236,7 +274,11 @@ def get_HE_regression_summary_stats_for_single_gene(YY, GG, EE):
 	SG_T_SG_vec = SG_T_SG[i_idx, j_idx]
 
 	# Put all into one matrix
-	X_mat = np.transpose(np.vstack((E_t_E_vec, G_T_G_vec, EG_T_EG_vec, SG_T_SG_vec)))
+	# The covariate term (if provided) is appended last so that the column indices of all other terms are unchanged
+	if C_t_C_vec is None:
+		X_mat = np.transpose(np.vstack((E_t_E_vec, G_T_G_vec, EG_T_EG_vec, SG_T_SG_vec)))
+	else:
+		X_mat = np.transpose(np.vstack((E_t_E_vec, G_T_G_vec, EG_T_EG_vec, SG_T_SG_vec, C_t_C_vec)))
 
 	# Compute summary stats
 	X_t_X = np.dot(np.transpose(X_mat), X_mat)
@@ -320,6 +362,19 @@ def extract_per_gene_HE_regression_summary_stats(args):
 
 	# Extract interaction QTL E variable
 	EE, E_var_sample_names = load_in_E_variable(args.binary_E_interaction_covariate_file)
+
+	# Extract additional covariates to control for (None if no covariate file was provided)
+	CC, covariate_sample_names = load_in_covariates(args.covariate_file)
+	C_t_C_vec = None
+	if CC is not None:
+		if np.array_equal(covariate_sample_names, E_var_sample_names) == False:
+			print('Fatal error: Covariate sample names do not match interaction variable sample names (need 1 to 1 match)')
+			sys.exit(1)
+		# All covariates share a single variance component, and C*C^T does not vary across
+		# genes, so its upper-triangular elements only need to be computed once
+		i_idx, j_idx = np.triu_indices(len(EE), k=1)
+		C_t_C = np.dot(np.transpose(CC), CC)
+		C_t_C_vec = C_t_C[i_idx, j_idx]
 
 	# Make progress bar
 	pbar = tqdm(total=total_n_genes, desc="Processing genes")
@@ -414,9 +469,9 @@ def extract_per_gene_HE_regression_summary_stats(args):
 
 			# Get regression summary stats for a single gene
 			if args.permute:
-				gene_XtX, gene_XtY, gene_ratio = get_HE_regression_summary_stats_for_single_gene_permed(YY, GG, EE, perm_expression[perm_counter,:])
+				gene_XtX, gene_XtY, gene_ratio = get_HE_regression_summary_stats_for_single_gene_permed(YY, GG, EE, perm_expression[perm_counter,:], C_t_C_vec)
 			else:
-				gene_XtX, gene_XtY, gene_ratio = get_HE_regression_summary_stats_for_single_gene(YY, GG, EE)
+				gene_XtX, gene_XtY, gene_ratio = get_HE_regression_summary_stats_for_single_gene(YY, GG, EE, C_t_C_vec)
 
 
 			perm_counter = perm_counter + 1
@@ -448,7 +503,7 @@ def compute_variance_parameters(per_gene_HE_ss):
 			global_XtY = global_XtY + gene_tuple[5]
 
 	# Compute regression coefficints
-	coef = np.dot(np.linalg.inv(global_XtX), global_XtY)
+	coef = np.linalg.solve(global_XtX, global_XtY)
 
 	# Organize into arrays
 	gene_ratios = np.asarray(gene_ratios)
@@ -471,6 +526,13 @@ def compute_standard_interaction_variance_parameters(per_gene_HE_ss):
 	global_XtY = None
 	gene_nsnps = []
 
+	# Terms to keep: everything except the PA term (column index 3).
+	# The covariate term (column index 4) is only present if a covariate file was provided.
+	keep_indices = [0, 1, 2]
+	if per_gene_HE_ss[0][4].shape[0] == 5:
+		keep_indices.append(4)
+	keep_indices_2d = np.ix_(keep_indices, keep_indices)
+
 	# Loop through genes
 	for gene_tuple in per_gene_HE_ss:
 		gene_nsnps.append(gene_tuple[3])
@@ -479,8 +541,8 @@ def compute_standard_interaction_variance_parameters(per_gene_HE_ss):
 		gene_XtY = gene_tuple[5]
 
 		# Remove PA term from gene_XtX
-		gene_XtX_no_PA = gene_XtX[:3, :][:, :3]
-		gene_XtY_no_PA = gene_XtY[:3]
+		gene_XtX_no_PA = gene_XtX[keep_indices_2d]
+		gene_XtY_no_PA = gene_XtY[keep_indices]
 
 		if global_XtX is None:
 			global_XtX = np.copy(gene_XtX_no_PA)
@@ -490,7 +552,7 @@ def compute_standard_interaction_variance_parameters(per_gene_HE_ss):
 			global_XtY = global_XtY + gene_XtY_no_PA
 
 	# Compute regression coefficints
-	coef = np.dot(np.linalg.inv(global_XtX), global_XtY)
+	coef = np.linalg.solve(global_XtX, global_XtY)
 
 	# Organize into arrays
 	gene_nsnps = np.asarray(gene_nsnps)
@@ -596,6 +658,8 @@ def main():
 						help='Path to output file stem')
 	parser.add_argument('--gene-list', default='none', type=str,
 						help='File containing list of genes to run analysis on. Use none if dont wish to filter')
+	parser.add_argument('--covariate-file', default='none', type=str,
+						help='File containing additional covariates to control for (same format as --binary-E-interaction-covariate-file, but may contain multiple covariates). All covariates share a single variance component. Use none if dont wish to control for additional covariates')
 	# Defaults
 	parser.add_argument('--cis-radius', default=500000, type=int,
 						help='cis window around TSS to consider snps')
