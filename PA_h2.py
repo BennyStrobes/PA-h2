@@ -202,16 +202,109 @@ def standardize_genotype(G, axis=1, eps=1e-12):
 
 	return G_std, keep_mask
 
-def get_HE_regression_summary_stats_for_single_gene_permed(YY, GG, EE, YY_perm, C_t_C_vec=None):
+def estimate_residual_variance_he(Y_g, G_g, eps=1e-8):
+	"""
+	Estimate residual (non-genetic) variance of Y within a single E group using HE regression.
+
+	Parameters
+	----------
+	Y_g : np.ndarray (n_g,)
+		Expression for samples in this group.
+	G_g : np.ndarray (n_g, M)
+		Standardized cis genotype for samples in this group (rows = samples).
+
+	Returns
+	-------
+	sigma_e2 : float
+		Residual variance = var(Y_g) - estimated genetic variance (clipped to [eps*var(Y_g), var(Y_g)]).
+	"""
+	n_g, M = G_g.shape
+	# Center within group
+	Yc = Y_g - np.mean(Y_g)
+	Gc = G_g - np.mean(G_g, axis=0, keepdims=True)
+	var_y = np.dot(Yc, Yc)/(n_g - 1)
+
+	# Off-diagonal HE regression of Y_i*Y_j on K_ij (K = Gc Gc^T / M), without forming the n_g x n_g matrix
+	K_diag = np.sum(np.square(Gc), axis=1)/M
+	Gt_y = np.dot(np.transpose(Gc), Yc)
+	sum_K_yy = (np.dot(Gt_y, Gt_y)/M - np.sum(K_diag*np.square(Yc)))/2.0
+	Gt_G = np.dot(np.transpose(Gc), Gc)
+	sum_K_sq = (np.sum(np.square(Gt_G))/(M*M) - np.sum(np.square(K_diag)))/2.0
+	sigma_g2 = sum_K_yy/sum_K_sq
+
+	# Genetic variance contribution to var(Y) is sigma_g2 * mean(diag(K))
+	sigma_e2 = var_y - sigma_g2*np.mean(K_diag)
+	sigma_e2 = np.clip(sigma_e2, eps*var_y, var_y)
+
+	return sigma_e2
+
+def estimate_residual_variance_reml(Y_g, G_g, n_grid=400, log_delta_bounds=(-8.0, 8.0)):
+	"""
+	Estimate residual (non-genetic) variance of Y within a single E group using single-component REML:
+	Y_g = mu + g + e, g ~ N(0, sigma_g2 * K), e ~ N(0, sigma_e2 * I), K = G_g G_g^T / M.
+	Uses the SVD of the (centered) genotype so cost is O(n_g * M * min(n_g, M)).
+	delta = sigma_g2/sigma_e2 is optimized over a log-spaced grid (plus delta=0).
+
+	Parameters
+	----------
+	Y_g : np.ndarray (n_g,)
+		Expression for samples in this group.
+	G_g : np.ndarray (n_g, M)
+		Standardized cis genotype for samples in this group (rows = samples).
+
+	Returns
+	-------
+	sigma_e2 : float
+		REML estimate of residual variance.
+	"""
+	n_g, M = G_g.shape
+	# Centering projects out the intercept (REML for intercept-only fixed effects)
+	Yc = Y_g - np.mean(Y_g)
+	Gc = (G_g - np.mean(G_g, axis=0, keepdims=True))/np.sqrt(M)
+
+	# Eigen-decomposition of K via thin SVD of Gc
+	U, s, _ = np.linalg.svd(Gc, full_matrices=False)
+	lam = np.square(s)
+	keep = lam > 1e-10*np.max(lam)
+	U = U[:, keep]
+	lam = lam[keep]
+
+	# Rotated phenotype; the remaining (n_g - 1 - r) dims have variance sigma_e2 only
+	y_rot_sq = np.square(np.dot(np.transpose(U), Yc))
+	rss_perp = max(np.dot(Yc, Yc) - np.sum(y_rot_sq), 0.0)
+	n_eff = n_g - 1
+
+	# Profiled restricted negative log likelihood over delta
+	deltas = np.concatenate(([0.0], np.exp(np.linspace(log_delta_bounds[0], log_delta_bounds[1], n_grid))))
+	scale = deltas[:, np.newaxis]*lam[np.newaxis, :] + 1.0
+	sigma_e2_vec = (np.sum(y_rot_sq[np.newaxis, :]/scale, axis=1) + rss_perp)/n_eff
+	nll = n_eff*np.log(sigma_e2_vec) + np.sum(np.log(scale), axis=1)
+
+	sigma_e2 = sigma_e2_vec[np.argmin(nll)]
+
+	return sigma_e2
+
+def get_HE_regression_summary_stats_for_single_gene_permed(YY, GG, EE, residualize_genotype_boolean, YY_perm, C_t_C_vec=None):
 	# Standardize EE
 	stand_EE = (EE - np.mean(EE))/np.std(EE)
 	# Create interaction effects
 	EE_GG = GG * stand_EE[:, np.newaxis]
 
 	pred_SS = np.ones(len(EE))
-	pred_SS[EE==1.0] = np.var(YY_perm[EE==1.0],ddof=1)
-	pred_SS[EE==0.0] = np.var(YY_perm[EE==0.0],ddof=1)		
+	if residualize_genotype_boolean == False:
+		Y1_var = np.var(YY_perm[EE==1.0],ddof=1)
+		Y2_var = np.var(YY_perm[EE==0.0],ddof=1)
+	else:
+		#Y1_var_he = estimate_residual_variance_he(YY_perm[EE==1.0], GG[EE==1.0, :])
+		#Y2_var_he = estimate_residual_variance_he(YY_perm[EE==0.0], GG[EE==0.0, :])
+		Y1_var_reml = estimate_residual_variance_reml(YY_perm[EE==1.0], GG[EE==1.0, :])
+		Y2_var_reml = estimate_residual_variance_reml(YY_perm[EE==0.0], GG[EE==0.0, :])
+		Y1_var = Y1_var_reml
+		Y2_var = Y2_var_reml
+	pred_SS[EE==1.0] = Y1_var
+	pred_SS[EE==0.0] = Y2_var
 	pred_SS = pred_SS/np.mean(pred_SS)
+
 	PA_GG = GG * np.sqrt(pred_SS[:, np.newaxis])
 
 
@@ -244,7 +337,7 @@ def get_HE_regression_summary_stats_for_single_gene_permed(YY, GG, EE, YY_perm, 
 	
 	return X_t_X, X_t_Y, ratio
 
-def get_HE_regression_summary_stats_for_single_gene(YY, GG, EE, C_t_C_vec=None):
+def get_HE_regression_summary_stats_for_single_gene(YY, GG, EE, residualize_genotype_boolean, C_t_C_vec=None):
 	# Standardize EE
 	stand_EE = (EE - np.mean(EE))/np.std(EE)
 	# Create interaction effects
@@ -252,8 +345,18 @@ def get_HE_regression_summary_stats_for_single_gene(YY, GG, EE, C_t_C_vec=None):
 
 
 	pred_SS = np.ones(len(EE))
-	pred_SS[EE==1.0] = np.var(YY[EE==1.0],ddof=1)
-	pred_SS[EE==0.0] = np.var(YY[EE==0.0],ddof=1)		
+	if residualize_genotype_boolean == False:
+		Y1_var = np.var(YY[EE==1.0],ddof=1)
+		Y2_var = np.var(YY[EE==0.0],ddof=1)
+	else:
+		#Y1_var_he = estimate_residual_variance_he(YY[EE==1.0], GG[EE==1.0, :])
+		#Y2_var_he = estimate_residual_variance_he(YY[EE==0.0], GG[EE==0.0, :])
+		Y1_var_reml = estimate_residual_variance_reml(YY[EE==1.0], GG[EE==1.0, :])
+		Y2_var_reml = estimate_residual_variance_reml(YY[EE==0.0], GG[EE==0.0, :])
+		Y1_var = Y1_var_reml
+		Y2_var = Y2_var_reml
+	pred_SS[EE==1.0] = Y1_var
+	pred_SS[EE==0.0] = Y2_var
 	pred_SS = pred_SS/np.mean(pred_SS)
 	PA_GG = GG * np.sqrt(pred_SS[:, np.newaxis])
 
@@ -469,9 +572,9 @@ def extract_per_gene_HE_regression_summary_stats(args):
 
 			# Get regression summary stats for a single gene
 			if args.permute:
-				gene_XtX, gene_XtY, gene_ratio = get_HE_regression_summary_stats_for_single_gene_permed(YY, GG, EE, perm_expression[perm_counter,:], C_t_C_vec)
+				gene_XtX, gene_XtY, gene_ratio = get_HE_regression_summary_stats_for_single_gene_permed(YY, GG, EE, args.residualize_genotype, perm_expression[perm_counter,:], C_t_C_vec)
 			else:
-				gene_XtX, gene_XtY, gene_ratio = get_HE_regression_summary_stats_for_single_gene(YY, GG, EE, C_t_C_vec)
+				gene_XtX, gene_XtY, gene_ratio = get_HE_regression_summary_stats_for_single_gene(YY, GG, EE, args.residualize_genotype, C_t_C_vec)
 
 
 			perm_counter = perm_counter + 1
@@ -669,10 +772,11 @@ def main():
 						help='Minimum number of snps per gene. else we throw out the gene.')
 	parser.add_argument('--permute', default=False, type=bool,
 						help='Minimum number of snps per gene. else we throw out the gene.')
+	parser.add_argument('--residualize-genotype', default=False, action='store_true',
+						help='Residualize genotype. Defaults to False when flag not present.')
 	args = parser.parse_args()
 
 	print_pah2_bear()
-
 
 	######################
 	# Load in data
