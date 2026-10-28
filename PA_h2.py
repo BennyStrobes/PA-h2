@@ -387,7 +387,103 @@ def get_HE_regression_summary_stats_for_single_gene(YY, GG, EE, residualize_geno
 	X_t_X = np.dot(np.transpose(X_mat), X_mat)
 	X_t_Y = np.dot(np.transpose(X_mat), Y_t_Y_vec)
 	ratio = np.square(np.mean(np.sqrt(pred_SS)))
-	
+
+	return X_t_X, X_t_Y, ratio
+
+def assign_cross_fit_folds(EE, n_folds):
+	# Randomly assign samples to folds, stratified by E so each fold keeps the same E==1 / E==0 mix
+	fold_assignments = np.zeros(len(EE), dtype=int)
+	for e_val in [1.0, 0.0]:
+		e_indices = np.random.permutation(np.where(EE == e_val)[0])
+		fold_assignments[e_indices] = np.arange(len(e_indices)) % n_folds
+
+	# Each fold needs at least 2 samples from each E group to estimate a within-group variance
+	for fold_iter in range(n_folds):
+		for e_val in [1.0, 0.0]:
+			if np.sum((fold_assignments == fold_iter) & (EE == e_val)) < 2:
+				print('Fatal error: too many cross-fit folds for the number of samples in each E group (need at least 2 samples per E group per fold)')
+				sys.exit(1)
+
+	return fold_assignments
+
+def get_pred_SS_from_sample_subset(YY_var, GG, EE, residualize_genotype_boolean, sample_mask):
+	# Per-group variances estimated only from samples in sample_mask, then expanded to all samples (normalized to mean 1)
+	group1_mask = sample_mask & (EE == 1.0)
+	group2_mask = sample_mask & (EE == 0.0)
+	if residualize_genotype_boolean == False:
+		Y1_var = np.var(YY_var[group1_mask],ddof=1)
+		Y2_var = np.var(YY_var[group2_mask],ddof=1)
+	else:
+		Y1_var = estimate_residual_variance_reml(YY_var[group1_mask], GG[group1_mask, :])
+		Y2_var = estimate_residual_variance_reml(YY_var[group2_mask], GG[group2_mask, :])
+
+	pred_SS = np.ones(len(EE))
+	pred_SS[EE==1.0] = Y1_var
+	pred_SS[EE==0.0] = Y2_var
+	pred_SS = pred_SS/np.mean(pred_SS)
+
+	return pred_SS
+
+def get_cross_fit_HE_regression_summary_stats_for_single_gene(YY, GG, EE, residualize_genotype_boolean, fold_assignments, YY_var, C_t_C_vec=None):
+	# Same as get_HE_regression_summary_stats_for_single_gene, except that for each pair (i,j) the per-group variances
+	# defining the PA term are estimated only from samples in neither i's nor j's fold.
+	# This removes the dependence between the PA regressor and the outcome Y_i*Y_j.
+	# YY_var is the expression used to estimate the per-group variances (YY for standard analysis, permuted expression for permutation)
+	# With 2 folds, there are no samples left for pairs that span the two folds, so only within-fold pairs are used.
+
+	# Standardize EE
+	stand_EE = (EE - np.mean(EE))/np.std(EE)
+	# Create interaction effects
+	EE_GG = GG * stand_EE[:, np.newaxis]
+
+	# Covariances
+	Y_t_Y = np.dot(YY.reshape(-1,1), YY.reshape(1,-1))
+	E_t_E = np.dot(stand_EE.reshape(-1,1), stand_EE.reshape(1,-1))
+	G_T_G = np.dot(GG, np.transpose(GG))
+	EG_T_EG = np.dot(EE_GG, np.transpose(EE_GG))
+
+	# Get upper-traingle elements in vector form of each covariance matrix
+	i_idx, j_idx = np.triu_indices(len(YY), k=1)
+	Y_t_Y_vec = Y_t_Y[i_idx, j_idx]
+	E_t_E_vec = E_t_E[i_idx, j_idx]
+	G_T_G_vec = G_T_G[i_idx, j_idx]
+	EG_T_EG_vec = EG_T_EG[i_idx, j_idx]
+
+	# Fold pair of each sample pair
+	n_folds = np.max(fold_assignments) + 1
+	pair_fold_lo = np.minimum(fold_assignments[i_idx], fold_assignments[j_idx])
+	pair_fold_hi = np.maximum(fold_assignments[i_idx], fold_assignments[j_idx])
+
+	# Build PA term separately for each fold pair
+	SG_T_SG_vec = np.zeros(len(i_idx))
+	used_pairs = np.zeros(len(i_idx), dtype=bool)
+	ratio_weighted_sum = 0.0
+	for fold_a in range(n_folds):
+		for fold_b in range(fold_a, n_folds):
+			held_out_samples = (fold_assignments != fold_a) & (fold_assignments != fold_b)
+			# No samples left to estimate variances (only happens for cross-fold pairs when n_folds == 2)
+			if np.sum(held_out_samples) == 0:
+				continue
+			pair_mask = (pair_fold_lo == fold_a) & (pair_fold_hi == fold_b)
+			pred_SS = get_pred_SS_from_sample_subset(YY_var, GG, EE, residualize_genotype_boolean, held_out_samples)
+			SG_T_SG_vec[pair_mask] = G_T_G_vec[pair_mask]*np.sqrt(pred_SS[i_idx[pair_mask]]*pred_SS[j_idx[pair_mask]])
+			used_pairs[pair_mask] = True
+			# Weight each fold pair's ratio by the number of sample pairs it covers
+			ratio_weighted_sum = ratio_weighted_sum + np.sum(pair_mask)*np.square(np.mean(np.sqrt(pred_SS)))
+
+	# Put all into one matrix (restricted to used pairs)
+	# The covariate term (if provided) is appended last so that the column indices of all other terms are unchanged
+	if C_t_C_vec is None:
+		X_mat = np.transpose(np.vstack((E_t_E_vec, G_T_G_vec, EG_T_EG_vec, SG_T_SG_vec)))[used_pairs, :]
+	else:
+		X_mat = np.transpose(np.vstack((E_t_E_vec, G_T_G_vec, EG_T_EG_vec, SG_T_SG_vec, C_t_C_vec)))[used_pairs, :]
+	Y_t_Y_vec = Y_t_Y_vec[used_pairs]
+
+	# Compute summary stats
+	X_t_X = np.dot(np.transpose(X_mat), X_mat)
+	X_t_Y = np.dot(np.transpose(X_mat), Y_t_Y_vec)
+	ratio = ratio_weighted_sum/np.sum(used_pairs)
+
 	return X_t_X, X_t_Y, ratio
 
 def extract_total_number_of_genes(filer, gene_set=None):
@@ -478,6 +574,10 @@ def extract_per_gene_HE_regression_summary_stats(args):
 		i_idx, j_idx = np.triu_indices(len(EE), k=1)
 		C_t_C = np.dot(np.transpose(CC), CC)
 		C_t_C_vec = C_t_C[i_idx, j_idx]
+
+	# Assign samples to cross-fit folds (same folds used for all genes)
+	if args.cross_fit_folds > 0:
+		fold_assignments = assign_cross_fit_folds(EE, args.cross_fit_folds)
 
 	# Make progress bar
 	pbar = tqdm(total=total_n_genes, desc="Processing genes")
@@ -571,7 +671,11 @@ def extract_per_gene_HE_regression_summary_stats(args):
 			del standardized_cis_genotype_mat
 
 			# Get regression summary stats for a single gene
-			if args.permute:
+			if args.cross_fit_folds > 0 and args.permute:
+				gene_XtX, gene_XtY, gene_ratio = get_cross_fit_HE_regression_summary_stats_for_single_gene(YY, GG, EE, args.residualize_genotype, fold_assignments, perm_expression[perm_counter,:], C_t_C_vec)
+			elif args.cross_fit_folds > 0:
+				gene_XtX, gene_XtY, gene_ratio = get_cross_fit_HE_regression_summary_stats_for_single_gene(YY, GG, EE, args.residualize_genotype, fold_assignments, YY, C_t_C_vec)
+			elif args.permute:
 				gene_XtX, gene_XtY, gene_ratio = get_HE_regression_summary_stats_for_single_gene_permed(YY, GG, EE, args.residualize_genotype, perm_expression[perm_counter,:], C_t_C_vec)
 			else:
 				gene_XtX, gene_XtY, gene_ratio = get_HE_regression_summary_stats_for_single_gene(YY, GG, EE, args.residualize_genotype, C_t_C_vec)
@@ -774,7 +878,13 @@ def main():
 						help='Minimum number of snps per gene. else we throw out the gene.')
 	parser.add_argument('--residualize-genotype', default=False, action='store_true',
 						help='Residualize genotype. Defaults to False when flag not present.')
+	parser.add_argument('--cross-fit-folds', default=0, type=int,
+						help='Number of folds for cross-fitting the per-group variances that define the PA term. For each pair of samples, variances are estimated only from samples in neither of their folds. With 2 folds, only within-fold pairs are used. 0 means no cross-fitting.')
 	args = parser.parse_args()
+
+	if args.cross_fit_folds == 1 or args.cross_fit_folds < 0:
+		print('Fatal error: --cross-fit-folds must be 0 (no cross-fitting) or at least 2')
+		sys.exit(1)
 
 	print_pah2_bear()
 
